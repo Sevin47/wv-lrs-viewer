@@ -119,7 +119,7 @@
       font-weight: bold; margin-top: 6px; 
     }
 
-    #detailsModal, #helpModal {
+    #detailsModal, #helpModal, #alertModal {
       display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%;
       background-color: rgba(0,0,0,0.7); /* Darker backdrop */
     }
@@ -332,7 +332,64 @@
     </div>
   </div>
 
+  <div id="alertModal" role="dialog" aria-modal="true" aria-labelledby="alertModalTitle">
+    <div class="modal-content" style="text-align: center; border: 3px solid #cc0000; max-width: 500px; padding: 30px;">
+      <div class="panel-header" style="border-bottom: 2px solid #cc0000; justify-content: center;">
+        <h2 id="alertModalTitle" style="font-size: 26px; margin: 0; color: #cc0000;">⚠️ Connection Warning</h2>
+      </div>
+      <p style="font-size: 20px; font-weight: bold; margin: 25px 0; color: #111;">
+        We are currently experiencing some instability with our Esri services,  which is affecting the Geometry and Measures app and may impact data layers and tool functionality.
+      </p>
+      <button id="btnDismissAlert" class="action-btn" style="background-color: #cc0000; font-size: 18px; max-width: 200px; margin: 0 auto;">Acknowledge</button>
+    </div>
+  </div>
+
   <script>
+    // --- Data Layer Health Check ---
+    const dataLayerUrls = [
+      'https://gis.transportation.wv.gov/arcgis/rest/services/Roads_And_Highways/Publication_LRS/FeatureServer/89',
+      'https://gis.transportation.wv.gov/arcgis/rest/services/Roads_And_Highways/Publication_LRS/FeatureServer/118'
+    ];
+
+    async function checkDataLayers(urls) {
+      let hasServerIssue = false;
+
+      for (const url of urls) {
+        try {
+          const response = await fetch(`${url}?f=json`);
+          
+          if (!response.ok) {
+            hasServerIssue = true;
+            console.error(`Server issue: ${url} returned HTTP status ${response.status}`);
+          } else {
+            const data = await response.json();
+            if (data.error) {
+              hasServerIssue = true;
+              console.error(`ArcGIS Error for ${url}: ${data.error.message}`);
+            }
+          }
+        } catch (error) {
+          hasServerIssue = true;
+          console.error(`Network or Fetch failure for ${url}:`, error);
+        }
+      }
+
+      if (hasServerIssue) {
+        document.getElementById("alertModal").style.display = "block";
+        document.getElementById("btnDismissAlert").focus();
+      } else {
+        console.log("All data layers are successfully returning 200 OK.");
+      }
+    }
+
+    // Execute the health check immediately
+    checkDataLayers(dataLayerUrls);
+
+    // Event listener for acknowledging the alert modal
+    document.getElementById("btnDismissAlert").addEventListener("click", () => {
+      document.getElementById("alertModal").style.display = "none";
+    });
+    // ---------------------------------
     require([
       "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer", "esri/layers/GroupLayer", 
       "esri/Basemap", "esri/layers/TileLayer", "esri/layers/VectorTileLayer",
@@ -734,9 +791,14 @@
       window.onclick = function(event) { 
           if (event.target == document.getElementById("detailsModal")) { document.getElementById("detailsModal").style.display = "none"; }
           if (event.target == document.getElementById("helpModal")) { document.getElementById("helpModal").style.display = "none"; }
+          if (event.target == document.getElementById("alertModal")) { document.getElementById("alertModal").style.display = "none"; }
       }
       document.addEventListener('keydown', function(event) {
-          if (event.key === "Escape") { document.getElementById("detailsModal").style.display = "none"; document.getElementById("helpModal").style.display = "none"; }
+          if (event.key === "Escape") { 
+              document.getElementById("detailsModal").style.display = "none"; 
+              document.getElementById("helpModal").style.display = "none"; 
+              document.getElementById("alertModal").style.display = "none"; 
+          }
       });
 
       // ADDED: Function to send route ID to the Find Measure tool
