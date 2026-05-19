@@ -43,6 +43,15 @@
     }
 
     .panel-header {
+      /* NEW STICKY PROPERTIES */
+      position: sticky;
+      top: -20px; /* Pulls header to the absolute top, ignoring container padding */
+      margin-top: -20px;
+      padding-top: 20px;
+      background-color: #ffffff; /* Solid background prevents scrolling text from bleeding through */
+      z-index: 10; /* Keeps the header above the scrolling route cards */
+      
+      /* EXISTING PROPERTIES */
       font-size: 18px; font-weight: bold; margin-bottom: 12px;
       border-bottom: 2px solid #004772; /* Darker blue for AAA 7:1 contrast */
       padding-bottom: 5px; color: #000000;
@@ -391,14 +400,14 @@
     });
     // ---------------------------------
     require([
-      "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer", "esri/layers/GroupLayer", 
+      "esri/Map", "esri/views/MapView", "esri/layers/FeatureLayer", "esri/layers/GroupLayer", "esri/layers/GraphicsLayer", 
       "esri/Basemap", "esri/layers/TileLayer", "esri/layers/VectorTileLayer",
       "esri/rest/support/Query", "esri/rest/query", "esri/geometry/Point", "esri/geometry/Polyline",
       "esri/geometry/geometryEngine", "esri/Graphic", "esri/widgets/BasemapGallery",
       "esri/widgets/LayerList", "esri/widgets/Expand", "esri/widgets/Home", "esri/widgets/Legend", 
       "esri/widgets/Search", "esri/widgets/Locate", "esri/geometry/Extent", "esri/core/reactiveUtils",
       "esri/geometry/support/webMercatorUtils"
-    ], (Map, MapView, FeatureLayer, GroupLayer, Basemap, TileLayer, VectorTileLayer, Query, query, Point, Polyline, geometryEngine, Graphic, BasemapGallery, LayerList, Expand, Home, Legend, Search, Locate, Extent, reactiveUtils, webMercatorUtils) => {
+    ], (Map, MapView, FeatureLayer, GroupLayer, GraphicsLayer, Basemap, TileLayer, VectorTileLayer, Query, query, Point, Polyline, geometryEngine, Graphic, BasemapGallery, LayerList, Expand, Home, Legend, Search, Locate, Extent, reactiveUtils, webMercatorUtils, Layer, MapImageLayer, FeatureTable) => {
 
       const enhancedBasemap = new Basemap({
         portalItem: { id: "084291b0ecad4588b8c8853898d72445" }, 
@@ -454,8 +463,9 @@
       const legendDummy = new FeatureLayer({ url: lrsLayerUrl, title: "Routes", renderer: routeRenderer, definitionExpression: "1=0", listMode: "hide", legendEnabled: true });
       const streetLayer = new FeatureLayer({ url: streetLayerUrl, outFields: ["STREET_NAME"], visible: false, listMode: "hide", definitionExpression: "RH_TO_DATE IS NULL" });
       const bridgeLayer = new FeatureLayer({ url: bridgeLayerUrl, title: "Bridges", outFields: ["*"], definitionExpression: "RH_TO_DATE IS NULL", minScale: 50000, renderer: { type: "simple", symbol: { type: "simple-marker", style: "square", color: "#cc5200", outline: { color: "black", width: 1 }, size: 8 } }, labelingInfo: [bridgeLabelClass] });
+      const highlightLayer = new GraphicsLayer({ title: "Highlights", listMode: "hide" });
 
-      map.addMany([layerBottom, layerMiddle, layerTop, routeShieldLayer, legendDummy, streetLayer, bridgeLayer]);
+      map.addMany([layerBottom, layerMiddle, layerTop, highlightLayer, routeShieldLayer, legendDummy, streetLayer, bridgeLayer]);
 
       view.ui.add(new Home({ view: view }), "top-left");
       const locateWidget = new Locate({ view: view });
@@ -484,7 +494,7 @@
       const addressExpand = new Expand({ view: view, content: addressSearch, expandIconClass: "esri-icon-search", expandTooltip: "Address Search", group: "top-right" });
 
       const legendExpand = new Expand({ view: view, content: new Legend({ view: view, layerInfos: [{ layer: legendDummy }, { layer: bridgeLayer }] }), expandTooltip: "Legend", group: "top-right" });
-      const basemapSource = [wvImageryBasemap, enhancedBasemap, Basemap.fromId("hybrid"), Basemap.fromId("streets-vector"), Basemap.fromId("topo-vector"), Basemap.fromId("gray-vector"), Basemap.fromId("dark-gray-vector")]; 
+      const basemapSource = [wvImageryBasemap, enhancedBasemap, Basemap.fromId("satellite"), Basemap.fromId("streets-vector"), Basemap.fromId("topo-vector"), Basemap.fromId("gray-vector"), Basemap.fromId("dark-gray-vector")]; 
       const bgExpand = new Expand({ view: view, content: new BasemapGallery({ view: view, source: basemapSource }), expandTooltip: "Basemaps", group: "top-right" });
       const llExpand = new Expand({ view: view, content: new LayerList({ view: view }), expandTooltip: "Layers", group: "top-right" });
       
@@ -594,10 +604,10 @@
       function createLabel(pt, txt) { return new Graphic({ geometry:pt, symbol: { type:"text", color:"#660000", haloColor:"white", haloSize:"1.5px", text:txt, yoffset:10, font:{size:10, weight:"bold", family:"sans-serif"} } }); }
       function parseRouteInfo(id) { if (!id || id.length < 7) return { number: "?", system: "Unknown" }; let numStr = parseInt(id.substring(3,7)).toString(); const sub = parseInt(id.substring(7,9)); if (sub > 0) numStr += "/" + sub; const sysCode = id.substring(2,3); const supp = id.substring(9,11); let sysName = systemMap[sysCode] || "System " + sysCode; if (supp === '24') sysName = "Proposed " + sysName; return { number: numStr, system: sysName }; }
 
-      window.highlightRoute = (idx) => { view.graphics.removeAll(); if(window.currentData && window.currentData[idx]) { const d = window.currentData[idx]; view.graphics.add(new Graphic({ geometry: d.graphic.geometry, symbol: { type:"simple-line", color:[0,255,255,1], width:5 } })); if(window.clickLoc && d.snap) { view.graphics.add(new Graphic({ geometry: new Polyline({paths:[[[window.clickLoc.x, window.clickLoc.y], [d.snap.x, d.snap.y]]], spatialReference:view.spatialReference}), symbol:{type:"simple-line", color:[50,50,50], style:"dash"} })); view.graphics.add(new Graphic({ geometry: d.snap, symbol: { type:"simple-marker", color:[0,255,255,1], outline:{color:"black"}, size:8 } })); } } };
-      window.clearHighlight = () => { view.graphics.removeAll(); };
+      window.highlightRoute = (idx) => { highlightLayer.removeAll(); if(window.currentData && window.currentData[idx]) { const d = window.currentData[idx]; highlightLayer.add(new Graphic({ geometry: d.graphic.geometry, symbol: { type:"simple-line", color:[0,255,255,1], width:5 } })); if(window.clickLoc && d.snap) { highlightLayer.add(new Graphic({ geometry: new Polyline({paths:[[[window.clickLoc.x, window.clickLoc.y], [d.snap.x, d.snap.y]]], spatialReference:view.spatialReference}), symbol:{type:"simple-line", color:[50,50,50], style:"dash"} })); highlightLayer.add(new Graphic({ geometry: d.snap, symbol: { type:"simple-marker", color:[0,255,255,1], outline:{color:"black"}, size:8 } })); } } };
+      window.clearHighlight = () => { highlightLayer.removeAll(); };
       window.zoomToBridge = (oid) => { if (window.currentBridgeResults) { const b = window.currentBridgeResults.find(f => f.attributes.OBJECTID === oid); if (b) view.goTo({ target: b.geometry, zoom: 18 }); } };
-      window.highlightBridge = (idx) => { window.clearHighlightBridge(); if(window.currentBridgeResults && window.currentBridgeResults[idx]) { const b = window.currentBridgeResults[idx]; const h = new Graphic({ geometry: b.geometry, symbol: { type: "simple-marker", style: "diamond", color: [0, 255, 255, 0.9], size: 18, outline: { width: 2, color: "black" } } }); h.isBridgeHighlight = true; view.graphics.add(h); } };
+      window.highlightBridge = (idx) => { window.clearHighlightBridge(); if(window.currentBridgeResults && window.currentBridgeResults[idx]) { const b = window.currentBridgeResults[idx]; const h = new Graphic({ geometry: b.geometry, symbol: { type: "simple-marker", style: "diamond", color: [0, 255, 255, 0.9], size: 18, outline: { width: 2, color: "black" } } }); h.isBridgeHighlight = true; highlightLayer.add(h); } };
       window.clearHighlightBridge = () => { const highlights = view.graphics.filter(g => g.isBridgeHighlight); view.graphics.removeMany(highlights); };
 
       async function resolveLocation(input) {
@@ -643,9 +653,9 @@
          if(!routeId) { alert("Main Route ID is required."); return; }
          
          status.innerHTML = "Fetching Main Route Geometry...";
-         const q = new Query({ where: `CO_ROUTEID = '${routeId}' AND TODATE IS NULL`, returnGeometry: true, returnM: true, outFields: ["*"], outSpatialReference: view.spatialReference });
+         const q = new Query({ where: `ROUTEID = '${routeId}'`, returnGeometry: true, returnM: true, outFields: ["*"], outSpatialReference: view.spatialReference });
          try {
-             const routeResults = await query.executeQueryJSON(networkLayerUrl, q);
+             const routeResults = await query.executeQueryJSON(lrsLayerUrl, q);
              if (routeResults.features.length === 0) { status.innerHTML = "Route Not Found."; alert("Main Route ID not found."); return; }
              const rawFeatures = routeResults.features;
              const allGeoms = rawFeatures.map(f => f.geometry);
@@ -668,15 +678,15 @@
                      if(pt) {
                          const snap = getMeasureOnFeatureArray(rawFeatures, pt);
                          if(snap) {
-                             view.graphics.add(new Graphic({ geometry: pt, symbol: { type: "simple-marker", color: "#cc5200", size: 10 } }));
-                             view.graphics.add(new Graphic({ geometry: new Polyline({ paths: [[[pt.x, pt.y], [snap.snapPoint.x, snap.snapPoint.y]]], spatialReference: view.spatialReference }), symbol: { type: "simple-line", color: [50, 50, 50, 0.8], width: 1, style: "short-dash" } }));
+                             highlightLayer.add(new Graphic({ geometry: pt, symbol: { type: "simple-marker", color: "#cc5200", size: 10 } }));
+                             highlightLayer.add(new Graphic({ geometry: new Polyline({ paths: [[[pt.x, pt.y], [snap.snapPoint.x, snap.snapPoint.y]]], spatialReference: view.spatialReference }), symbol: { type: "simple-line", color: [50, 50, 50, 0.8], width: 1, style: "short-dash" } }));
                              return snap.m;
                          } else { return null; }
                      } return null;
                  }
              }
 
-             view.graphics.removeAll(); view.closePopup();
+             highlightLayer.removeAll(); view.closePopup();
              if (!bmpInput && !empInput) { bmpMeasure = bounds.minM; empMeasure = bounds.maxM; status.innerHTML = "Showing full route."; } else {
                  if(bmpInput) bmpMeasure = await processInput(bmpInput, "Start"); if(empInput) empMeasure = await processInput(empInput, "End");
                  if (bmpMeasure !== null && empMeasure === null) { empMeasure = bmpMeasure; } if (bmpMeasure === null && empMeasure !== null) { bmpMeasure = empMeasure; }
@@ -694,18 +704,18 @@
 
              if (Math.abs(safeMax - safeMin) < 0.002) {
                  const p = getPointAtMeasure(routeGeoForDraw, safeMin);
-                 if(p) { view.goTo({ target: p, zoom: 16 }); view.graphics.add(new Graphic({ geometry: p, symbol: { type: "simple-marker", color: [0,255,255,1], size: 12, outline: {color:"white", width: 2} } })); view.graphics.add(createLabel(p, safeMin.toFixed(3))); }
+                 if(p) { view.goTo({ target: p, zoom: 16 }); highlightLayer.add(new Graphic({ geometry: p, symbol: { type: "simple-marker", color: [0,255,255,1], size: 12, outline: {color:"white", width: 2} } })); highlightLayer.add(createLabel(p, safeMin.toFixed(3))); }
              } else {
                  if (!bmpInput && !empInput) {
-                      view.goTo(routeGeoForDraw); view.graphics.add(new Graphic({ geometry: routeGeoForDraw, symbol: { type: "simple-line", color: [0, 255, 255, 1], width: 6 } }));
-                      if(bounds.minM !== Infinity) view.graphics.add(createLabel(getPointAtMeasure(routeGeoForDraw, bounds.minM), safeMin.toFixed(3)));
-                      if(bounds.maxM !== -Infinity) view.graphics.add(createLabel(getPointAtMeasure(routeGeoForDraw, bounds.maxM), safeMax.toFixed(3)));
+                      view.goTo(routeGeoForDraw); highlightLayer.add(new Graphic({ geometry: routeGeoForDraw, symbol: { type: "simple-line", color: [0, 255, 255, 1], width: 6 } }));
+                      if(bounds.minM !== Infinity) highlightLayer.add(createLabel(getPointAtMeasure(routeGeoForDraw, bounds.minM), safeMin.toFixed(3)));
+                      if(bounds.maxM !== -Infinity) highlightLayer.add(createLabel(getPointAtMeasure(routeGeoForDraw, bounds.maxM), safeMax.toFixed(3)));
                  } else {
                       const seg = sliceRouteByMeasure(routeGeoForDraw, safeMin, safeMax);
                       if(seg) {
-                          view.goTo(seg); view.graphics.add(new Graphic({ geometry: seg, symbol: { type: "simple-line", color: [0, 255, 255, 1], width: 6 } })); 
+                          view.goTo(seg); highlightLayer.add(new Graphic({ geometry: seg, symbol: { type: "simple-line", color: [0, 255, 255, 1], width: 6 } })); 
                           const p1 = getPointAtMeasure(routeGeoForDraw, safeMin); const p2 = getPointAtMeasure(routeGeoForDraw, safeMax);
-                          if(p1) view.graphics.add(createLabel(p1, safeMin.toFixed(3))); if(p2) view.graphics.add(createLabel(p2, safeMax.toFixed(3)));
+                          if(p1) highlightLayer.add(createLabel(p1, safeMin.toFixed(3))); if(p2) highlightLayer.add(createLabel(p2, safeMax.toFixed(3)));
                       }
                  }
              }
@@ -871,7 +881,7 @@
                 <div><span class="measure-badge">MP: ${safeM.toFixed(3)}</span></div>
                 <div style="margin-top: 8px;">
                     ${showDetails ? `<button class="details-btn" aria-label="View Route Details for ${item.id}" onclick="window.fetchRilDetails('${item.id}', ${safeM})">Details</button>` : ''}
-                    <button class="details-btn" style="background-color: #595959;" title="Send Route ID to Find Measure Widget" onclick="window.applyToFindMeasure('${item.id}')">Use in Find Measure</button>
+                    <button class="details-btn" style="background-color: #1e7b22;" title="Send Route ID to Find Measure Widget" onclick="window.applyToFindMeasure('${item.id}')">Use in Find Measure</button>
                 </div>
               </div>`;
           }
@@ -883,20 +893,20 @@
           document.getElementById("btnFindBridge").innerText = "Find Bridge";
           if (bridgeResults.features.length === 0) {
               if (searchArea) {
-                  view.graphics.removeAll(); view.graphics.add(new Graphic({ geometry: searchArea, symbol: { type: "simple-fill", color: [0, 71, 114, 0.1], outline: { color: [0, 71, 114, 1], style: "dash" } } })); 
+                  highlightLayer.removeAll(); highlightLayer.add(new Graphic({ geometry: searchArea, symbol: { type: "simple-fill", color: [0, 71, 114, 0.1], outline: { color: [0, 71, 114, 1], style: "dash" } } })); 
                   view.goTo(searchArea.extent.expand(5));
                   document.getElementById("resultsList").innerHTML = `<div class="bridge-card" style="border-left-color: #a94442;"><div style="color: #a94442; font-weight:bold; font-size:16px;">No Bridge Found</div><div>Location: ${rawInput}</div><div><i>Zoomed to calculated measure location.</i></div></div>`;
                   document.getElementById("infoPanel").style.display = "block";
               } else { alert("No active bridges found matching criteria."); }
               return;
           }
-          view.graphics.removeAll(); let html = ""; window.currentBridgeResults = bridgeResults.features;
+          highlightLayer.removeAll(); let html = ""; window.currentBridgeResults = bridgeResults.features;
           bridgeResults.features.forEach((b, idx) => {
              const attr = b.attributes; const barsId = attr.BARSid || attr.OBJECTID; 
              html += `<div class="bridge-card" onclick="window.zoomToBridge(${attr.OBJECTID})" onmouseover="window.highlightBridge(${idx})" onmouseout="window.clearHighlightBridge()"><div style="font-weight:bold; font-size:16px;">Bridge Found</div><div><b>BARS ID:</b> ${barsId}</div><div><b>Ref:</b> ${rawInput}</div></div>`;
-             view.graphics.add(new Graphic({ geometry: b.geometry, symbol: { type: "simple-marker", style: "diamond", color: [0, 255, 255, 0.9], size: 14, outline: { width: 2, color: "black" } } }));
+             highlightLayer.add(new Graphic({ geometry: b.geometry, symbol: { type: "simple-marker", style: "diamond", color: [0, 255, 255, 0.9], size: 14, outline: { width: 2, color: "black" } } }));
           });
-          if (searchArea) { view.graphics.add(new Graphic({ geometry: searchArea, symbol: { type: "simple-fill", color: [0, 71, 114, 0.1], outline: { color: [0, 71, 114, 1], style: "dash" } } })); view.goTo(searchArea.extent.expand(2)); } 
+          if (searchArea) { highlightLayer.add(new Graphic({ geometry: searchArea, symbol: { type: "simple-fill", color: [0, 71, 114, 0.1], outline: { color: [0, 71, 114, 1], style: "dash" } } })); view.goTo(searchArea.extent.expand(2)); } 
           else if (bridgeResults.features.length === 1) { view.goTo({ target: bridgeResults.features[0].geometry, zoom: 16 }); } 
           else { view.goTo(bridgeResults.features.map(f => f.geometry)); }
           document.getElementById("resultsList").innerHTML = html; document.getElementById("infoPanel").style.display = "block";
@@ -904,7 +914,7 @@
 
       document.getElementById("btnFindBridge").addEventListener("click", () => {
         let rawInput = document.getElementById("inputBridgeID").value.trim(); if (!rawInput) { alert("Please enter a Bridge Number or BARSID."); return; }
-        document.getElementById("btnFindBridge").innerText = "Searching..."; view.graphics.removeAll(); view.closePopup();
+        document.getElementById("btnFindBridge").innerText = "Searching..."; highlightLayer.removeAll(); view.closePopup();
         if (!rawInput.includes("-")) {
             const bQuery = new Query({ where: `UPPER(BARSid) LIKE UPPER('%${rawInput}%') AND RH_TO_DATE IS NULL`, returnGeometry: true, outFields: ["*"] });
             bridgeLayer.queryFeatures(bQuery).then(bridgeResults => {
@@ -944,8 +954,8 @@
 
       function resetDropdown(id, placeholder) { const sel = document.getElementById(id); sel.innerHTML = ""; sel.disabled = true; if (placeholder) { const opt = document.createElement("option"); opt.text = placeholder; opt.value = ""; sel.add(opt); } }
 
-      document.getElementById("btnClear").addEventListener("click", () => { view.graphics.removeAll(); document.getElementById("resultsList").innerHTML = "<p style='color: #333333; font-weight: bold;'>Click a route on the map or use one of the search tools above.</p>"; });
-      document.getElementById("btnCloseInfo").addEventListener("click", () => { document.getElementById("infoPanel").style.display = "none"; view.graphics.removeAll(); });
+      document.getElementById("btnClear").addEventListener("click", () => { highlightLayer.removeAll(); document.getElementById("resultsList").innerHTML = "<p style='color: #333333; font-weight: bold;'>Click a route on the map or use one of the search tools above.</p>"; });
+      document.getElementById("btnCloseInfo").addEventListener("click", () => { document.getElementById("infoPanel").style.display = "none"; highlightLayer.removeAll(); });
 
     });
   </script>
