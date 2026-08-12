@@ -490,7 +490,7 @@
       window.contextExpand = contextExpand;
 
       const wvExtent = new Extent({ xmin: -9199945, ymin: 4467222, xmax: -8651646, ymax: 4959210, spatialReference: { wkid: 3857 } });
-      const addressSearch = new Search({ view: view, popupEnabled: false, includeDefaultSources: false, sources: [{ url: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer", singleLineFieldName: "SingleLine", name: "WV Address Search", placeholder: "Search West Virginia Address", countryCode: "US", filter: { geometry: wvExtent } }] });
+      const addressSearch = new Search({ view: view, popupEnabled: false, includeDefaultSources: false, sources: [{ url: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer", singleLineFieldName: "SingleLine", name: "WV Address Search", placeholder: "Search by Lat/long or Address", countryCode: "US", filter: { geometry: wvExtent } }] });
       const addressExpand = new Expand({ view: view, content: addressSearch, expandIconClass: "esri-icon-search", expandTooltip: "Address Search", group: "top-right" });
 
       const legendExpand = new Expand({ view: view, content: new Legend({ view: view, layerInfos: [{ layer: legendDummy }, { layer: bridgeLayer }] }), expandTooltip: "Legend", group: "top-right" });
