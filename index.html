@@ -309,7 +309,7 @@
             </li>
             <li>
                 <span class="help-icon-box" aria-hidden="true"><span class="esri-icon-search" style="font-size: 18px;"></span></span>
-                <div><b>Address Search:</b> Zoom the map directly to a specific street, address, city, or GPS coordinate.</div>
+                <div><b>Route, Address, or GPS Search:</b> Zoom the map directly to a specific route (Kanawha CR 25/5), address, city, or GPS coordinate.</div>
             </li>
             <li>
                 <span class="help-icon-box" aria-hidden="true"><span class="custom-bridge-icon"></span></span>
@@ -447,7 +447,6 @@
           { value: "8", symbol: { type: "simple-line", color: [0, 92, 230, 1], width: 1.5 }, label: "HARP" },
           { value: "0", symbol: { type: "simple-line", color: [120, 120, 120, 1], width: 0.75 }, label: "MNS" }
         ],
-        // defaultSymbol: { type: "simple-line", color: [100, 100, 100, 0.8], width: 1 } - Default symbol line has been removed to avoid confusion with the "Other Routes" layer in the legend, which uses the same symbol. All features should match one of the unique value infos, so a default symbol is not necessary.
       };
 
       const bridgeLabelClass = { symbol: { type: "text", color: "#660000", haloColor: "white", haloSize: "1.5px", font: { size: 10, weight: "bold", family: "sans-serif" }, yoffset: 2 }, labelPlacement: "above-center", labelExpressionInfo: { expression: "$feature.BARSid" }, minScale: 10000 };
@@ -489,9 +488,198 @@
       const contextExpand = new Expand({ view: view, content: document.getElementById("contextPanel"), expandIconClass: "esri-icon-polyline", expandTooltip: "Find Measure", group: "top-right" });
       window.contextExpand = contextExpand;
 
+      // --- Custom WV Route Parser & Search Source ---
+      const countyNameToCode = {};
+      Object.entries(countyMap).forEach(([code, name]) => {
+        countyNameToCode[name.toUpperCase()] = code;
+      });
+
+      const systemKeywords = {
+        'INTERSTATE': '1', 'I': '1', 'I-': '1',
+        'US ROUTE': '2', 'US': '2', 'U.S.': '2', 'US-': '2',
+        'WV ROUTE': '3', 'STATE ROUTE': '3', 'WV': '3', 'W.V.': '3', 'STATE': '3',
+        'COUNTY ROUTE': '4', 'CO. ROUTE': '4', 'CO ROUTE': '4', 'CR': '4', 'COUNTY': '4', 'CO': '4', 'CO.': '4',
+        'STATE PARK': '6', 'SP': '6', 'PARK': '6',
+        'FANS': '7',
+        'HARP': '8'
+      };
+
+      function parseWvRouteQuery(term) {
+        const clean = term.trim().toUpperCase();
+
+        if (/^\d{2,13}$/.test(clean)) {
+          return `ROUTEID LIKE '${clean}%'`;
+        }
+
+        let matchedCountyCode = null;
+        let remainingText = clean;
+
+        for (const [name, code] of Object.entries(countyNameToCode)) {
+          const regex = new RegExp(`\\b${name}\\b`, 'i');
+          if (regex.test(remainingText)) {
+            matchedCountyCode = code;
+            remainingText = remainingText.replace(regex, '').trim();
+            break;
+          }
+        }
+
+        let matchedSysCode = null;
+        const sortedSysKeys = Object.keys(systemKeywords).sort((a, b) => b.length - a.length);
+        for (const key of sortedSysKeys) {
+          const regex = new RegExp(`\\b${key.replace('.', '\\.')}\\b`, 'i');
+          if (regex.test(remainingText)) {
+            matchedSysCode = systemKeywords[key];
+            remainingText = remainingText.replace(regex, '').trim();
+            break;
+          }
+        }
+
+        const routeMatch = remainingText.match(/(\d+)(?:[\/\- ](\d+))?/);
+        let routeNum = null;
+        let subNum = null;
+
+        if (routeMatch) {
+          routeNum = routeMatch[1].padStart(4, '0');
+          if (routeMatch[2]) {
+            subNum = routeMatch[2].padStart(2, '0');
+          }
+        }
+
+        if (matchedCountyCode && matchedSysCode && routeNum) {
+          const sub = subNum || "%";
+          return `ROUTEID LIKE '${matchedCountyCode}${matchedSysCode}${routeNum}${sub}%'`;
+        } else if (matchedCountyCode && routeNum) {
+          return `ROUTEID LIKE '${matchedCountyCode}_${routeNum}%'`;
+        } else if (matchedSysCode && routeNum) {
+          return `ROUTEID LIKE '__${matchedSysCode}${routeNum}%'`;
+        } else if (matchedCountyCode) {
+          return `ROUTEID LIKE '${matchedCountyCode}%'`;
+        } else if (routeNum) {
+          return `ROUTEID LIKE '___${routeNum}%'`;
+        }
+
+        return `ROUTEID LIKE '%${clean}%'`;
+      }
+
+      const wvRouteSearchSource = {
+        name: "WV Route Search",
+        placeholder: "e.g. Kanawha CR 25/2 or Jackson I 77",
+        getSuggestions: async (params) => {
+          const term = params.suggestTerm;
+          if (!term || term.trim().length < 2) return [];
+
+          const whereClause = parseWvRouteQuery(term);
+          const q = new Query({
+            where: whereClause,
+            outFields: ["ROUTEID"],
+            returnGeometry: false,
+            returnDistinctValues: true,
+            num: 12
+          });
+
+          try {
+            const res = await query.executeQueryJSON(lrsLayerUrl, q);
+            const seen = new Set();
+            const suggestions = [];
+
+            res.features.forEach((f) => {
+              const id = f.attributes.ROUTEID;
+              if (!seen.has(id)) {
+                seen.add(id);
+                const info = parseRouteInfo(id);
+                const coCode = id.substring(0, 2);
+                const coName = countyMap[coCode] || "";
+                const displayLabel = `${coName} ${info.system} ${info.number} (${id})`.trim();
+
+                suggestions.push({
+                  key: id,
+                  text: displayLabel,
+                  sourceIndex: params.sourceIndex
+                });
+              }
+            });
+
+            return suggestions;
+          } catch (err) {
+            console.error("Route suggestion query error:", err);
+            return [];
+          }
+        },
+        getResults: async (params) => {
+          let routeId = params.suggestResult ? params.suggestResult.key : params.value.trim();
+
+          if (!/^\d{13}$/.test(routeId)) {
+            const whereClause = parseWvRouteQuery(routeId);
+            const checkQ = new Query({
+              where: whereClause,
+              outFields: ["ROUTEID"],
+              returnGeometry: false,
+              num: 1
+            });
+            const checkRes = await query.executeQueryJSON(lrsLayerUrl, checkQ);
+            if (checkRes.features.length > 0) {
+              routeId = checkRes.features[0].attributes.ROUTEID;
+            }
+          }
+
+          const q = new Query({
+            where: `ROUTEID = '${routeId}'`,
+            outFields: ["*"],
+            returnGeometry: true,
+            returnM: true,
+            outSpatialReference: view.spatialReference
+          });
+
+          try {
+            const res = await query.executeQueryJSON(lrsLayerUrl, q);
+            if (res.features.length === 0) return [];
+
+            const feature = res.features[0];
+            const info = parseRouteInfo(routeId);
+            const coCode = routeId.substring(0, 2);
+            const coName = countyMap[coCode] || "";
+            const label = `${coName} ${info.system} ${info.number} (${routeId})`;
+
+            if (window.applyToFindMeasure) {
+              window.applyToFindMeasure(routeId);
+            }
+
+            highlightLayer.removeAll();
+            highlightLayer.add(new Graphic({
+              geometry: feature.geometry,
+              symbol: { type: "simple-line", color: [0, 255, 255, 1], width: 6 }
+            }));
+
+            return [{
+              feature: feature,
+              name: label,
+              extent: feature.geometry.extent
+            }];
+          } catch (err) {
+            console.error("Route result lookup error:", err);
+            return [];
+          }
+        }
+      };
+
       const wvExtent = new Extent({ xmin: -9199945, ymin: 4467222, xmax: -8651646, ymax: 4959210, spatialReference: { wkid: 3857 } });
-      const addressSearch = new Search({ view: view, popupEnabled: false, includeDefaultSources: false, sources: [{ url: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer", singleLineFieldName: "SingleLine", name: "WV Address Search", placeholder: "Search by Lat/long or Address", countryCode: "US", filter: { geometry: wvExtent } }] });
-      const addressExpand = new Expand({ view: view, content: addressSearch, expandIconClass: "esri-icon-search", expandTooltip: "Address Search", group: "top-right" });
+      const addressSearch = new Search({
+        view: view,
+        popupEnabled: false,
+        includeDefaultSources: false,
+        sources: [
+          wvRouteSearchSource,
+          {
+            url: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer",
+            singleLineFieldName: "SingleLine",
+            name: "WV Address Search",
+            placeholder: "Search by Lat/long or Address",
+            countryCode: "US",
+            filter: { geometry: wvExtent }
+          }
+        ]
+      });
+      const addressExpand = new Expand({ view: view, content: addressSearch, expandIconClass: "esri-icon-search", expandTooltip: "Search Routes, Addresses, or GPS", group: "top-right" });
 
       const legendExpand = new Expand({ view: view, content: new Legend({ view: view, layerInfos: [{ layer: legendDummy }, { layer: bridgeLayer }] }), expandTooltip: "Legend", group: "top-right" });
       const basemapSource = [wvImageryBasemap, enhancedBasemap, Basemap.fromId("satellite"), Basemap.fromId("streets-vector"), Basemap.fromId("topo-vector"), Basemap.fromId("gray-vector"), Basemap.fromId("dark-gray-vector")]; 
@@ -540,28 +728,28 @@
       function getMeasureOnFeatureArray(features, p) { 
         let bestD = Infinity, bestM = null, bestP = null;
         features.forEach(feat => {
-            const g = feat.geometry; if (!g || !g.paths) return;
-            g.paths.forEach(pth => {
-                if (pth.length < 2) return; 
-                for (let i = 0; i < pth.length - 1; i++) {
-                    const A = pth[i]; const B = pth[i + 1];
-                    if (!A || !B || A.length < 2 || B.length < 2) continue; if (A[0] === B[0] && A[1] === B[1]) continue;
-                    const p1 = new Point({x:A[0], y:A[1], spatialReference: g.spatialReference});
-                    const p2 = new Point({x:B[0], y:B[1], spatialReference: g.spatialReference});
-                    const seg = new Polyline({ paths: [[[A[0], A[1]], [B[0], B[1]]]], spatialReference: g.spatialReference });
-                    try {
-                        const n = geometryEngine.nearestCoordinate(seg, p);
-                        if (n.distance < bestD) {
-                            bestD = n.distance; bestP = n.coordinate;
-                            const mA = A[A.length - 1]; const mB = B[B.length - 1];
-                            if (typeof mA === 'number' && typeof mB === 'number') {
-                                 const full = geometryEngine.distance(p1, p2); const part = geometryEngine.distance(p1, n.coordinate);
-                                 const r = (full === 0) ? 0 : part / full; bestM = mA + (mB - mA) * r;
-                            }
-                        }
-                    } catch (err) { } 
+          const g = feat.geometry; if (!g || !g.paths) return;
+          g.paths.forEach(pth => {
+            if (pth.length < 2) return; 
+            for (let i = 0; i < pth.length - 1; i++) {
+              const A = pth[i]; const B = pth[i + 1];
+              if (!A || !B || A.length < 2 || B.length < 2) continue; if (A[0] === B[0] && A[1] === B[1]) continue;
+              const p1 = new Point({x:A[0], y:A[1], spatialReference: g.spatialReference});
+              const p2 = new Point({x:B[0], y:B[1], spatialReference: g.spatialReference});
+              const seg = new Polyline({ paths: [[[A[0], A[1]], [B[0], B[1]]]], spatialReference: g.spatialReference });
+              try {
+                const n = geometryEngine.nearestCoordinate(seg, p);
+                if (n.distance < bestD) {
+                  bestD = n.distance; bestP = n.coordinate;
+                  const mA = A[A.length - 1]; const mB = B[B.length - 1];
+                  if (typeof mA === 'number' && typeof mB === 'number') {
+                     const full = geometryEngine.distance(p1, p2); const part = geometryEngine.distance(p1, n.coordinate);
+                     const r = (full === 0) ? 0 : part / full; bestM = mA + (mB - mA) * r;
+                  }
                 }
-            });
+              } catch (err) { } 
+            }
+          });
         });
         if(bestM === null) return null; return { m: bestM, distance: bestD, snapPoint: bestP };
       }
