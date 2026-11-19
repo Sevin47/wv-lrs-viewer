@@ -452,8 +452,8 @@
       const bridgeLabelClass = { symbol: { type: "text", color: "#660000", haloColor: "white", haloSize: "1.5px", font: { size: 10, weight: "bold", family: "sans-serif" }, yoffset: 2 }, labelPlacement: "above-center", labelExpressionInfo: { expression: "$feature.BARSid" }, minScale: 10000 };
 
       const routeShieldLayer = new TileLayer({
-      url: "https://map.transportation.wv.gov/arcgis/rest/services/Hosted/Route_Shields/MapServer",
-      title: "Route Shields"
+      url: "https://tiles.arcgis.com/tiles/xLpB90lOmCXYDAWo/arcgis/rest/services/Route_Shields/MapServer",
+      title: "Route_Shields"
       });
 
       const layerBottom = new FeatureLayer({ url: lrsLayerUrl, renderer: routeRenderer, minScale: 100000, title: "Other Routes", legendEnabled: false, definitionExpression: "ROUTEID LIKE '__4%' OR ROUTEID LIKE '__0%' OR ROUTEID LIKE '__6%' OR ROUTEID LIKE '__7%' OR ROUTEID LIKE '__8%'" });
