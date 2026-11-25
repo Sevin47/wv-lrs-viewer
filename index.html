@@ -164,6 +164,25 @@
     }
     .details-btn:hover { background-color: #002d4a; }
 
+    /* Share button: outline style so it reads as secondary to Details and Use in Find Measure.
+       #004772 on white is about 10:1 (text) and the 2px border meets 3:1 for controls (1.4.11). */
+    .details-btn.share-btn { background-color: #ffffff; color: #004772; border: 2px solid #004772; }
+    .details-btn.share-btn:hover { background-color: #e6f2ff; }
+
+    #shareStatus { font-size: 14px; color: #111111; margin-top: 10px; }
+
+    /* Copy confirmation shown next to the clicked Share button. White on #1e7b22 is about 5.6:1. */
+    #shareToast {
+      position: fixed; z-index: 1000; pointer-events: none;
+      background-color: #1e7b22; color: #ffffff; font-size: 14px; font-weight: bold;
+      padding: 6px 10px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      visibility: hidden; opacity: 0; transition: opacity 0.15s;
+    }
+    #shareToast.visible { visibility: visible; opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { #shareToast { transition: none; } }
+    #shareStatus:empty { display: none; }
+    #shareStatus input { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; font-size: 13px; border: 1px solid #595959; border-radius: 4px; color: #000000; }
+
     #ctxStatus { font-size: 13px; color: #333333; margin-top: 5px; font-weight: bold; min-height: 1.5em; margin-bottom: 10px; }
 
     .custom-bridge-icon {
@@ -208,8 +227,12 @@
     <div id="resultsList" aria-live="polite" aria-atomic="true">
       <p style="color: #333333; font-weight: bold;">Click a route on the map or use one of the search tools above.</p>
     </div>
+    <div id="shareStatus" role="status" aria-live="polite"></div>
+    <div id="shareAnnounce" class="sr-only" role="status" aria-live="polite"></div>
     <button id="btnClear" class="clear-btn">Clear Selection</button>
   </div>
+
+  <div id="shareToast" aria-hidden="true"></div>
 
   <div id="bridgePanel" class="panel-base">
     <div class="panel-header"><h2 style="font-size: 18px; margin: 0;">Bridge Lookup</h2></div>
@@ -335,6 +358,7 @@
         <ul style="padding-left: 20px;">
             <li style="margin-bottom: 10px;">Click any road on the map to query it and display the Route ID, Street Name, and exact Measure data.</li>
             <li style="margin-bottom: 10px;">When viewing route details, click the <b>"Details"</b> button to load RIL Database attribution.</li>
+            <li style="margin-bottom: 10px;">Click <b>"Share"</b> on a route or a Find Measure result to copy a link to it. Anyone who opens the link sees the same route and milepoints highlighted.</li>
             <li style="margin-bottom: 10px;">Hit <b>Esc</b> or click anywhere outside this dialog to dismiss it.</li>
         </ul>
       </div>
@@ -420,6 +444,7 @@
       const wvImageryBasemap = new Basemap({ baseLayers: [wvImageryLayer], title: "WV Imagery (Leaf-Off)", id: "wv-imagery", thumbnailUrl: "https://services.wvgis.wvu.edu/arcgis/rest/services/Imagery_BaseMaps_EarthCover/wv_imagery_WVGISTC_leaf_off_mosaic/MapServer/info/thumbnail"});
 
       const map = new Map({ basemap: "gray-vector" });
+      const ROUTE_ID_PATTERN = /^[0-9A-Z]{13,17}$/; // Route IDs accepted by the ?route= deep link and the Share button
       const view = new MapView({ container: "viewDiv", map: map, center: [-80.600611, 39.014202], zoom: 7, popup: { dockEnabled: false, dockOptions: { buttonEnabled: false } } });
 
       const lrsLayerUrl = "https://services2.arcgis.com/xLpB90lOmCXYDAWo/arcgis/rest/services/Dominant_Routes/FeatureServer/20";
@@ -881,13 +906,16 @@
                  status.innerHTML = "Calculated. Drawing...";
              }
 
+             clearShareStatus();
              document.getElementById("infoPanel").style.display = "block";
              const safeMin = parseFloat(Math.min(bmpMeasure, empMeasure).toFixed(3)); const safeMax = parseFloat(Math.max(bmpMeasure, empMeasure).toFixed(3));
+             const isFullRoute = !bmpInput && !empInput;
              document.getElementById("resultsList").innerHTML = `
                 <div class="route-card" style="border-left-color:#004772; cursor:default;">
                     <div style="font-weight:bold; font-size:16px;">Find Measure Result</div>
                     <div><b>Route:</b> ${routeId}</div>
                     <div><b>Calc Range:</b> ${safeMin.toFixed(3)} - ${safeMax.toFixed(3)}</div>
+                    ${shareButtonHtml(routeId, isFullRoute ? null : safeMin, isFullRoute ? null : safeMax)}
                 </div>`;
 
              if (Math.abs(safeMax - safeMin) < 0.002) {
@@ -1022,6 +1050,7 @@
             togglePickMode(pickingTarget); return;
         }
 
+        clearShareStatus(); // an old share message shouldn't sit under new results
         document.getElementById("infoPanel").style.display = "block";
         document.getElementById("resultsList").innerHTML = "<p>Searching...</p>";
         const mQuery = new Query({ geometry: event.mapPoint, distance: 30, units: "meters", spatialRelationship: "intersects", returnGeometry: true, returnM: true, outFields: ["ROUTEID"], outSpatialReference: view.spatialReference });
@@ -1072,6 +1101,7 @@
                 <div style="margin-top: 8px;">
                     ${showDetails ? `<button class="details-btn" aria-label="View Route Details for ${item.id}" onclick="window.fetchRilDetails('${item.id}', ${safeM})">Details</button>` : ''}
                     <button class="details-btn" style="background-color: #1e7b22;" title="Send Route ID to Find Measure Widget" onclick="window.applyToFindMeasure('${item.id}')">Use in Find Measure</button>
+                    ${shareButtonHtml(item.id, null, null)}
                 </div>
               </div>`;
           }
@@ -1144,8 +1174,104 @@
 
       function resetDropdown(id, placeholder) { const sel = document.getElementById(id); sel.innerHTML = ""; sel.disabled = true; if (placeholder) { const opt = document.createElement("option"); opt.text = placeholder; opt.value = ""; sel.add(opt); } }
 
-      document.getElementById("btnClear").addEventListener("click", () => { highlightLayer.removeAll(); document.getElementById("resultsList").innerHTML = "<p style='color: #333333; font-weight: bold;'>Click a route on the map or use one of the search tools above.</p>"; });
-      document.getElementById("btnCloseInfo").addEventListener("click", () => { document.getElementById("infoPanel").style.display = "none"; highlightLayer.removeAll(); });
+      document.getElementById("btnClear").addEventListener("click", () => { clearShareStatus(); highlightLayer.removeAll(); document.getElementById("resultsList").innerHTML = "<p style='color: #333333; font-weight: bold;'>Click a route on the map or use one of the search tools above.</p>"; });
+      document.getElementById("btnCloseInfo").addEventListener("click", () => { clearShareStatus(); document.getElementById("infoPanel").style.display = "none"; highlightLayer.removeAll(); });
+
+      // --- Share link (v1.10) ---
+      // Builds the same ?route=&from=&to=&basemap= link that the deep-link reader below opens,
+      // and copies it. Share buttons are only drawn for Route IDs the reader will accept.
+      const SHARE_TOAST_MS = 3000;
+      const SHARE_TOAST_GAP = 6; // px between the toast and the button or screen edge
+      let shareToastTimer = null;
+
+      function isShareableRouteId(id) { return ROUTE_ID_PATTERN.test(String(id || "").trim().toUpperCase()); }
+
+      function shareButtonHtml(routeId, from, to) {
+        const id = String(routeId || "").trim().toUpperCase();
+        if (!isShareableRouteId(id)) return "";
+        const hasRange = Number.isFinite(from) && Number.isFinite(to);
+        const range = hasRange ? (Math.abs(to - from) < 0.002 ? ` at MP ${from.toFixed(3)}` : ` from MP ${from.toFixed(3)} to ${to.toFixed(3)}`) : "";
+        const data = hasRange ? ` data-from="${from.toFixed(3)}" data-to="${to.toFixed(3)}"` : "";
+        return `<button type="button" class="details-btn share-btn" data-route="${id}"${data} aria-label="Share: copy a link to Route ${id}${range}">Share</button>`;
+      }
+
+      function buildShareUrl(routeId, from, to) {
+        const url = new URL(window.location.href);
+        url.search = ""; url.hash = "";
+        url.searchParams.set("route", routeId);
+        if (from !== null && to !== null) { url.searchParams.set("from", from); url.searchParams.set("to", to); }
+        if (map.basemap && map.basemap.id === wvImageryBasemap.id) url.searchParams.set("basemap", "imagery");
+        return url.toString();
+      }
+
+      async function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          try { await navigator.clipboard.writeText(text); return true; } catch (e) { console.warn("Clipboard API failed, trying fallback.", e); }
+        }
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.left = "-9999px";
+        document.body.appendChild(ta); ta.select();
+        let ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { console.warn("execCommand copy failed.", e); }
+        document.body.removeChild(ta);
+        return ok;
+      }
+
+      function hideShareToast() {
+        clearTimeout(shareToastTimer);
+        document.getElementById("shareToast").classList.remove("visible");
+      }
+
+      // Shows "Route link copied" to the right of the button, or above it (below if needed)
+      // when there's no room on the right, so it doesn't cover the other buttons.
+      function showShareToast(btn) {
+        const toast = document.getElementById("shareToast");
+        hideShareToast();
+        toast.innerHTML = '<span aria-hidden="true">&#10003;</span> Route link copied';
+        const b = btn.getBoundingClientRect(); const t = toast.getBoundingClientRect();
+        const panel = document.getElementById("infoPanel").getBoundingClientRect();
+        let top, left;
+        if (b.right + SHARE_TOAST_GAP + t.width <= Math.min(panel.right, window.innerWidth) - SHARE_TOAST_GAP) {
+          left = b.right + SHARE_TOAST_GAP; top = b.top + (b.height - t.height) / 2;
+        } else {
+          top = b.top - t.height - SHARE_TOAST_GAP;
+          if (top < SHARE_TOAST_GAP) top = b.bottom + SHARE_TOAST_GAP;
+          left = Math.max(SHARE_TOAST_GAP, Math.min(b.left, window.innerWidth - t.width - SHARE_TOAST_GAP));
+        }
+        toast.style.top = `${top}px`; toast.style.left = `${left}px`;
+        toast.classList.add("visible");
+        shareToastTimer = setTimeout(hideShareToast, SHARE_TOAST_MS);
+      }
+
+      function clearShareStatus() {
+        hideShareToast();
+        document.getElementById("shareStatus").innerHTML = "";
+        document.getElementById("shareAnnounce").textContent = "";
+      }
+
+      // The toast is fixed on screen, so hide it if the panel scrolls or the window resizes.
+      document.getElementById("infoPanel").addEventListener("scroll", hideShareToast);
+      window.addEventListener("resize", hideShareToast);
+
+      document.getElementById("resultsList").addEventListener("click", async (event) => {
+        const btn = event.target.closest(".share-btn");
+        if (!btn) return;
+        const routeId = btn.dataset.route;
+        const hasRange = btn.dataset.from !== undefined && btn.dataset.to !== undefined;
+        const link = buildShareUrl(routeId, hasRange ? btn.dataset.from : null, hasRange ? btn.dataset.to : null);
+        const status = document.getElementById("shareStatus");
+        clearShareStatus();
+        if (await copyText(link)) {
+          const what = hasRange ? (Math.abs(parseFloat(btn.dataset.to) - parseFloat(btn.dataset.from)) < 0.002 ? `Route ${routeId} at MP ${btn.dataset.from}` : `Route ${routeId}, MP ${btn.dataset.from} to ${btn.dataset.to}`) : `Route ${routeId}`;
+          showShareToast(btn);
+          document.getElementById("shareAnnounce").textContent = `Route link copied for ${what}. Paste it in an email or chat to share.`;
+        } else {
+          // Copy blocked: show the link so it can be copied by hand. This message stays until cleared.
+          status.innerHTML = `<label for="shareLinkText">Copy this link to share Route ${routeId}:</label><input id="shareLinkText" type="text" readonly>`;
+          const input = document.getElementById("shareLinkText");
+          input.value = link; status.scrollIntoView({ block: "nearest" }); input.focus(); input.select();
+        }
+      });
 
       // Deep link: ?route=<ROUTEID>&from=<MP>&to=<MP>&basemap=imagery opens Find Measure at that
       // stretch, exactly as if it had been typed in and located. from/to are optional (the whole
@@ -1155,7 +1281,7 @@
       view.when(() => {
         const params = new URLSearchParams(window.location.search);
         const routeId = (params.get("route") || "").trim().toUpperCase();
-        if (!/^[0-9A-Z]{13,17}$/.test(routeId)) return;
+        if (!ROUTE_ID_PATTERN.test(routeId)) return;
         const measure = (key) => { const v = parseFloat(params.get(key)); return Number.isFinite(v) && v >= 0 ? v.toFixed(3) : ""; };
         if ((params.get("basemap") || "").toLowerCase() === "imagery") map.basemap = wvImageryBasemap;
         document.getElementById("ctxRouteID").value = routeId;
